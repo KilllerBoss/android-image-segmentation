@@ -1,35 +1,63 @@
-
-name: Android CI
-
+name: Android Release APK Bau
 on:
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
-
+push:
+branches:
+- main # Ausführen bei einem Push auf den Hauptzweig
+workflow_dispatch: # Manuelle Ausführung ermöglichen
 jobs:
-  build:
-    runs-on: ubuntu-latest
+build_release:
+runs-on: ubuntu-latest
+steps:
+  - name: Code auschecken
+    uses: actions/checkout@v4
 
-    steps:
-    - name: Checkout
-      uses: actions/checkout@v4
-
-    - name: Set up JDK 11
-      uses: actions/setup-java@v4
-      with:
-        java-version: '17'
-        distribution: 'temurin'
-        cache: gradle
-
-    - name: Grant execute permission for gradlew
-      run: chmod +x gradlew
+  - name: Java 17 einrichten
+    uses: actions/setup-java@v4
+    with:
+      distribution: 'temurin'
+      java-version: '17'
       
-    - name: Build with Gradle
-      run: ./gradlew assembleDebug
+  - name: Gradle einrichten (Caches)
+    uses: gradle/gradle-build-action@v3
 
-    - name: Upload APK
-      uses: actions/upload-artifact@v4
-      with:
-        name: app-debug.apk
-        path: app/build/outputs/apk/debug/app-debug.apk
+  - name: Ausführungsrechte für Gradle Wrapper setzen
+    run: chmod +x ./gradlew
+
+  - name: Release APK bauen
+    # Der Befehl 'assembleRelease' baut die APKs für alle konfigurierten Architekturen (inkl. ARM64 für S24 Ultra)
+    run: ./gradlew assembleRelease
+    
+  - name: Release APK Artefakt finden
+    # Suchen der generierten APK-Datei, die für die Installation benötigt wird.
+    id: find_apk
+    uses: actions/github-script@v7
+    with:
+      script: |
+        const fs = require('fs');
+        const path = require('path');
+        
+        // Standardpfad für die Release-APK
+        const buildDir = path.join(process.env.GITHUB_WORKSPACE, 'app', 'build', 'outputs', 'apk', 'release');
+        
+        const files = fs.readdirSync(buildDir).filter(file => file.endsWith('.apk'));
+        
+        if (files.length === 0) {
+          throw new Error("Keine Release APK-Datei gefunden im erwarteten Pfad.");
+        }
+        
+        // Wähle die erste gefundene APK (oft 'app-release.apk' oder ähnlich)
+        const apkPath = path.join(buildDir, files[0]);
+        
+        console.log(`Gefundene APK: ${apkPath}`);
+        core.setOutput('apk_path', apkPath);
+    env:
+      # Wir benötigen den Core-Modul-Zugriff für setOutput
+      ACTIONS_STEP_DEBUG: true
+
+  - name: Release APK als Artefakt hochladen
+    uses: actions/upload-artifact@v4
+    with:
+      name: android-image-segmentation-release-apk
+      path: ${{ steps.find_apk.outputs.apk_path }}
+      retention-days: 5
+
